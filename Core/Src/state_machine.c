@@ -10,9 +10,14 @@
 #include "logging.h"
 #include "main.h"
 #include "state_machine.h"
+#include "settings.h"
+
 #include "states/connecting_to_client.h"
 #include "states/reading_command_header_from_socket.h"
 #include "states/reading_command_payload_from_socket.h"
+#include "states/connecting_to_usb.h"
+
+#include "events/dx_usb_event.h"
 
 const char* fn_state_machine_state_to_string(en_state_machine_state_t state) {
 	switch (state) {
@@ -28,6 +33,8 @@ const char* fn_state_machine_state_to_string(en_state_machine_state_t state) {
 		return "Reading response from USB";
 	case EN_STATE_MACHINE_STATE__WRITING_RESPONSE_TO_SOCKET:
 		return "Writing response to socket";
+	case EN_STATE_MACHINE_STATE__CONNECTING_TO_USB:
+		return "Connecting to USB";
 	default:
 		Error_Handler();
 		return NULL;
@@ -55,17 +62,24 @@ static void fn_state_machine_init__prepare_server(st_state_machine_t *sm) {
 }
 
 void fn_state_machine_init(st_state_machine_t *sm) {
-	// Prints that we're initializing the state machine.
 	mlog("Initializing state machine");
 
-	// Sets the initial state.
-	sm->current_state = sm->next_state =
-			EN_STATE_MACHINE_STATE__CONNECTING_TO_CLIENT;
+	sm->usbEventQueue = osMessageQueueNew(
+	DX_ETH2USB__STATE_MACHINE__USB_EVENT_MAX_MSG_CNT, sizeof(DX_USBEventType_t),
+			NULL);
 
-	// Configures the client.
+	if (sm->usbEventQueue == NULL) {
+		mlog("Failed to create USB event queue");
+
+		Error_Handler();
+	}
+
+	sm->previousState = EN_STATE_MACHINE_STATE__CONNECTING_TO_CLIENT;
+	sm->current_state = EN_STATE_MACHINE_STATE__CONNECTING_TO_USB;
+	sm->next_state = EN_STATE_MACHINE_STATE__CONNECTING_TO_USB;
+
 	fn_state_machine_init__prepare_client(sm);
 
-	// Configures the server.
 	fn_state_machine_init__prepare_server(sm);
 }
 
@@ -108,6 +122,9 @@ static void fn_state_machine_loop__current_entry(st_state_machine_t *sm) {
 		break;
 	case EN_STATE_MACHINE_STATE__WRITING_RESPONSE_TO_SOCKET:
 		break;
+	case EN_STATE_MACHINE_STATE__CONNECTING_TO_USB:
+		DX_StateMachineState_ConnectingToUSB_Entry(sm);
+		break;
 	default:
 		break;
 	}
@@ -129,6 +146,9 @@ static void fn_state_machine_loop__current_do(st_state_machine_t *sm) {
 	case EN_STATE_MACHINE_STATE__READING_RESPONSE_FROM_USB:
 		break;
 	case EN_STATE_MACHINE_STATE__WRITING_RESPONSE_TO_SOCKET:
+		break;
+	case EN_STATE_MACHINE_STATE__CONNECTING_TO_USB:
+		DX_StateMachineState_ConnectingToUSB_Do(sm);
 		break;
 	default:
 		break;
@@ -154,6 +174,9 @@ static void fn_state_machine_loop__current_exit(st_state_machine_t *sm) {
 	case EN_STATE_MACHINE_STATE__READING_RESPONSE_FROM_USB:
 		break;
 	case EN_STATE_MACHINE_STATE__WRITING_RESPONSE_TO_SOCKET:
+		break;
+	case EN_STATE_MACHINE_STATE__CONNECTING_TO_USB:
+		DX_StateMachineState_ConnectingToUSB_Exit(sm);
 		break;
 	default:
 		break;
@@ -196,13 +219,10 @@ static void fn_state_machine_start__bind_server_socket(st_state_machine_t *sm) {
 	st_state_machine_server_t *server = &sm->server;
 	int rc = -1;
 
-	// Binds the server socket.
-	rc = bind(server->fd, (struct sockaddr *) &server->addr, sizeof(struct sockaddr_in));
+	rc = bind(server->fd, (struct sockaddr* ) &server->addr,
+			sizeof(struct sockaddr_in));
 
-	// Logs the error and calls the error handler the moment we failed
-	//  to bind the server socket.
-	if (rc == -1)
-	{
+	if (rc == -1) {
 		mlog("Failed to bind server socket, err (%d): %s", errno,
 				strerror(errno));
 
@@ -214,14 +234,25 @@ static void fn_state_machine_start__listen_server_socket(st_state_machine_t *sm)
 	st_state_machine_server_t *server = &sm->server;
 	int rc = -1;
 
-	// Listens the server socket.
 	rc = listen(server->fd, 1);
 
-	// Logs the error and calls the error handler the moment we failed
-	//  to listen the server socket.
-	if (rc == -1)
-	{
+	if (rc == -1) {
 		mlog("Failed to listen server socket, err (%d): %s", errno,
+				strerror(errno));
+
+		Error_Handler();
+	}
+}
+
+static void fn_state_machine_start__configure_server_socket(st_state_machine_t *sm) {
+	st_state_machine_server_t *server = &sm->server;
+	int rc = -1;
+
+	rc = fcntl(server->fd, F_SETFL,
+			fcntl(server->fd, F_GETFL, 0) | O_NONBLOCK);
+
+	if (rc == -1) {
+		mlog("Failed to make socket non blocking, err (%d): %s", errno,
 				strerror(errno));
 
 		Error_Handler();
@@ -236,6 +267,7 @@ void fn_state_machine_start(st_state_machine_t *sm) {
 	fn_state_machine_start__create_server_socket(sm);
 	fn_state_machine_start__bind_server_socket(sm);
 	fn_state_machine_start__listen_server_socket(sm);
+	fn_state_machine_start__configure_server_socket(sm);
 
 	// Calls the entry of the initial state.
 	fn_state_machine_loop__current_entry(sm);

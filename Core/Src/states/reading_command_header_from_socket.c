@@ -10,62 +10,91 @@
 #include "main.h"
 
 void fn_reading_command_header_from_socket__entry(st_state_machine_t *sm) {
+	sm->reading_command_header_from_socket_state.n_bytes_read = 0;
 }
 
-void fn_reading_command_header_from_socket__loop(st_state_machine_t *sm) {
-	int ret = -1;
+static void __loop__read(st_state_machine_t *sm) {
+	st_reading_command_header_from_socket_state_t *state =
+			&sm->reading_command_header_from_socket_state;
 
 	st_state_machine_client_t *client = &sm->client;
 
-	// Reads the command size from the client.
-	ret = read(client->fd, (void* ) &sm->command_size, sizeof(uint32_t));
+	state->read_rc = read(client->fd,
+			&((uint8_t* ) &sm->command_size)[state->n_bytes_read],
+			sizeof(uint32_t) - state->n_bytes_read);
+}
 
-	// Handles the case where we've finished reading the data from the client.
-	if (ret > 0) {
-		// Handles the case where a buffer would overflow.
-		if (sm->command_size > ST_STATE_MACHINE__COMMAND_PAYLOAD_SIZE) {
-			// Logs that we received the a too large size.
-			mlog("Receiving command that would overflow buffer by %d bytes",
-					sm->command_size - ST_STATE_MACHINE__COMMAND_PAYLOAD_SIZE);
-
-			// Goes back to the connecting state to connect to a new 'valid' client.
-			sm->next_state = EN_STATE_MACHINE_STATE__CONNECTING_TO_CLIENT;
-
-			// Don't do anything else.
-			return;
-		}
-
-		// Goes to the payload loading.
-		sm->next_state =
-				EN_STATE_MACHINE_STATE__READING_COMMAND_PAYLOAD_FROM_SOCKET;
-
-		// Don't do anything else.
-		return;
+static void __loop__handle_error(st_state_machine_t *sm) {
+	switch (errno) {
+	case EAGAIN: {
+		break;
 	}
-
-	// Handles the case where we received an EOS.
-	if (ret == 0) {
-		// Logs that we received the EOS.
-		mlog("Received an EOS during reading of header from client socket");
-
-		// Goes back to the connecting state since we lost the connection.
+	case ECONNRESET: {
 		sm->next_state = EN_STATE_MACHINE_STATE__CONNECTING_TO_CLIENT;
 
-		// Don't do anything else.
+		mlog("Connection reset by peer during reading "
+				"of payload from client socket");
+
+		break;
+	}
+	default: {
+		mlog("Failed to read header from client socket, error (%d): %s", errno,
+				strerror(errno));
+
+		Error_Handler();
+
+		break;
+	}
+	}
+}
+
+static void __loop__handle_eos(st_state_machine_t *sm) {
+	mlog("Received an EOS during reading of header from client socket");
+
+	sm->next_state = EN_STATE_MACHINE_STATE__CONNECTING_TO_CLIENT;
+}
+
+static void __loop__handle_data(st_state_machine_t *sm) {
+	st_reading_command_header_from_socket_state_t *state =
+			&sm->reading_command_header_from_socket_state;
+
+	state->n_bytes_read += (uint32_t) state->read_rc;
+
+	mlog("Received %u bytes of the %u bytes", state->n_bytes_read, sizeof(uint32_t));
+
+	if (state->n_bytes_read < sizeof(uint32_t)) {
 		return;
 	}
 
-	// Handles the case where we have to retry due to blocking.
-	if (errno == EAGAIN || errno == EWOULDBLOCK) {
+	if (sm->command_size > ST_STATE_MACHINE__COMMAND_PAYLOAD_SIZE) {
+		sm->next_state = EN_STATE_MACHINE_STATE__CONNECTING_TO_CLIENT;
+
+		mlog("Receiving command that would overflow buffer by %u bytes",
+				sm->command_size - ST_STATE_MACHINE__COMMAND_PAYLOAD_SIZE);
+
 		return;
+	} else {
+		mlog("Received command header indicating size of %d bytes",
+				sm->command_size);
+
+		sm->next_state =
+				EN_STATE_MACHINE_STATE__READING_COMMAND_PAYLOAD_FROM_SOCKET;
 	}
+}
 
-	// Logs the error.
-	mlog("Failed to read header from client socket, error (%d): %s", errno,
-			strerror(errno));
+void fn_reading_command_header_from_socket__loop(st_state_machine_t *sm) {
+	st_reading_command_header_from_socket_state_t *state =
+			&sm->reading_command_header_from_socket_state;
 
-	// Calls the error handler.
-	Error_Handler();
+	__loop__read(sm);
+
+	if (state->read_rc > 0) {
+		__loop__handle_data(sm);
+	} else if (state->read_rc == 0) {
+		__loop__handle_eos(sm);
+	} else {
+		__loop__handle_error(sm);
+	}
 }
 
 void fn_reading_command_header_from_socket__exit(st_state_machine_t *sm) {

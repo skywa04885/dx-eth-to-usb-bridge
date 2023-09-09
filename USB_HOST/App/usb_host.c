@@ -1,21 +1,21 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file            : usb_host.c
-  * @version         : v1.0_Cube
-  * @brief           : This file implements the USB Host
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2023 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file            : usb_host.c
+ * @version         : v1.0_Cube
+ * @brief           : This file implements the USB Host
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2023 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
@@ -29,7 +29,8 @@
 #include "usbh_mtp.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "events/dx_usb_event.h"
+#include "state_machine.h"
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN PV */
@@ -49,7 +50,7 @@ ApplicationTypeDef Appli_state = APPLICATION_IDLE;
  * -- Insert your variables declaration here --
  */
 /* USER CODE BEGIN 0 */
-
+extern st_state_machine_t g_sm;
 /* USER CODE END 0 */
 
 /*
@@ -114,28 +115,43 @@ void MX_USB_HOST_Init(void)
 static void USBH_UserProcess  (USBH_HandleTypeDef *phost, uint8_t id)
 {
   /* USER CODE BEGIN CALL_BACK_1 */
-  switch(id)
-  {
-  case HOST_USER_SELECT_CONFIGURATION:
-  break;
+	DX_USBEvent_t usbEvent;
 
-  case HOST_USER_DISCONNECTION:
-	  printf("Usb hs disconnected\r\n");
-Appli_state = APPLICATION_DISCONNECT;
-  break;
+	switch (id) {
+	case HOST_USER_SELECT_CONFIGURATION:
+		break;
 
-  case HOST_USER_CLASS_ACTIVE:
-  Appli_state = APPLICATION_READY;
-  break;
+	case HOST_USER_DISCONNECTION:
+		Appli_state = APPLICATION_DISCONNECT;
 
-  case HOST_USER_CONNECTION:
-	  printf("Usb hs connected, device id: %hhu\r\n", id);
-  Appli_state = APPLICATION_START;
-  break;
+		DX_USBEvent_Init(&usbEvent, DX_USB_EVENT__DISCONNECTED);
 
-  default:
-  break;
-  }
+		osMessageQueuePut(g_sm.usbEventQueue, &usbEvent, 0, 0);
+
+		break;
+
+	case HOST_USER_CLASS_ACTIVE:
+		Appli_state = APPLICATION_READY;
+
+		DX_USBEvent_Init(&usbEvent, DX_USB_EVENT__ACTIVE);
+
+		osMessageQueuePut(g_sm.usbEventQueue, &usbEvent, 0, 0);
+
+		break;
+
+	case HOST_USER_CONNECTION:
+
+		Appli_state = APPLICATION_START;
+
+		DX_USBEvent_Init(&usbEvent, DX_USB_EVENT__CONNECTED);
+
+		osMessageQueuePut(g_sm.usbEventQueue, &usbEvent, 0, 0);
+
+		break;
+
+	default:
+		break;
+	}
   /* USER CODE END CALL_BACK_1 */
 }
 

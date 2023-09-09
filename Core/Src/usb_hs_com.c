@@ -6,7 +6,6 @@
  */
 
 #include "usb_hs_com.h"
-#include "safe_area.h"
 #include "main.h"
 
 void fn_usb_hs_com_init(st_usb_hs_com_state_t *restrict usb_hs_com,
@@ -100,10 +99,9 @@ void fn_usb_hs_com_write_and_read(st_usb_hs_com_state_t *restrict usb_hs_com,
 	}
 
 	// Reads the bulk data.
+
 }
 
 void fn_usb_hs_com_on_disconnected_handler(st_usb_hs_com_state_t *usb_hs_com) {
-//	HAL_StatusTypeDef hal_status = HAL_OK;
-//
-//	USBH_FreePipe(usb_hs_com->phost, USB_HS_COM__PRIMARY_PIPE_NUMBER);
+	usb_hs_com->connected = false;
 }

@@ -5,40 +5,28 @@
  *      Author: luke
  */
 
+#include <stm32h723xx.h>
+#include <stm32h7xx_hal.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 
+#include "main.h"
 #include "logging.h"
 #include "states/connecting_to_client.h"
 
-void fn_connecting_to_client__entry(st_state_machine_t *sm) {
+static void DX_StateMachine_ConnectingToClient_Entry_CloseOldSocket(st_state_machine_t *sm) {
 	int ret = -1;
 
 	st_state_machine_client_t *client = &sm->client;
 
-	// If there was no client in advance, nothing to do.
 	if (client->fd == -1) {
 		return;
 	}
 
-	// Logs that we're closing the previous client.
-	mlog("Open client socket, shutting down and closing it before proceeding");
+	mlog("Open client socket, closing it before proceeding");
 
-	// Shuts the connection down.
-	ret = shutdown(client->fd, SHUT_RDWR);
-
-	// Handles the case where the shutdown failed.
-	if (ret == -1) {
-		mlog("Failed to shutdown client socket, error(%d): %s", errno,
-				strerror(errno));
-
-		Error_Handler();
-	}
-
-	// Closes the client file descriptor.
 	ret = close(client->fd);
 
-	// Handles the case where the close failed.
 	if (ret == -1) {
 		mlog("Failed to close client socket, error(%d): %s", errno,
 				strerror(errno));
@@ -46,11 +34,41 @@ void fn_connecting_to_client__entry(st_state_machine_t *sm) {
 		Error_Handler();
 	}
 
-	// Sets the file descriptor to -1 to indicate it was closed.
 	client->fd = -1;
 }
 
-void fn_connecting_to_client__loop(st_state_machine_t *sm) {
+static void DX_StateMachine_ConnectingToClient_Entry_PrepareGreenLED(st_state_machine_t *sm)
+{
+	sm->connectingToClientState.lastGreenBlinkTick = HAL_GetTick();
+
+	HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_RESET);
+}
+
+void fn_connecting_to_client__entry(st_state_machine_t *sm) {
+	DX_StateMachine_ConnectingToClient_Entry_CloseOldSocket(sm);
+	DX_StateMachine_ConnectingToClient_Entry_PrepareGreenLED(sm);
+}
+
+static void DX_StateMachine_ConnectingToClient_Do_BlinkGreenLED(st_state_machine_t *sm)
+{
+	DX_StateMachine_ConnectingToClientState_t *state = &sm->connectingToClientState;
+
+	uint32_t currentTick;
+
+	currentTick = HAL_GetTick();
+
+	if (currentTick - state->lastGreenBlinkTick < 500U)
+	{
+		return;
+	}
+
+	state->lastGreenBlinkTick = currentTick;
+
+	HAL_GPIO_TogglePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin);
+}
+
+static void DX_StateMachine_ConnectingToClient_Do_AcceptClient(st_state_machine_t *sm)
+{
 	st_state_machine_server_t *server = &sm->server;
 	st_state_machine_client_t *client = &sm->client;
 
@@ -85,7 +103,20 @@ void fn_connecting_to_client__loop(st_state_machine_t *sm) {
 	Error_Handler();
 }
 
-void fn_connecting_to_client__exit(st_state_machine_t *sm) {
+void fn_connecting_to_client__loop(st_state_machine_t *sm) {
+	DX_StateMachine_ConnectingToClient_Do_BlinkGreenLED(sm);
+	DX_StateMachine_ConnectingToClient_Do_AcceptClient(sm);
+
+}
+
+static void DX_StateMachine_ConnectingToClient_Exit_EnableGreenLED(st_state_machine_t *sm)
+{
+	HAL_GPIO_WritePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin, GPIO_PIN_SET);
+}
+
+
+static void DX_StateMachine_ConnectingToClient_Exit_ConfigureSocket(st_state_machine_t *sm)
+{
 	int ret = -1;
 
 	st_state_machine_client_t *client = &sm->client;
@@ -101,4 +132,10 @@ void fn_connecting_to_client__exit(st_state_machine_t *sm) {
 
 		Error_Handler();
 	}
+}
+
+
+void fn_connecting_to_client__exit(st_state_machine_t *sm) {
+	DX_StateMachine_ConnectingToClient_Exit_ConfigureSocket(sm);
+	DX_StateMachine_ConnectingToClient_Exit_EnableGreenLED(sm);
 }
