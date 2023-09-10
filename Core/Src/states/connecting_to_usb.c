@@ -88,8 +88,10 @@ static void DX_StateMachineState_ConnectingToUSB_Do_HandleConnect(
 	USBH_DeviceTypeDef *device = &hUsbHostHS.device;
 	USBH_DevDescTypeDef *descr = (USBH_DevDescTypeDef*) device->Data;
 
-	while ((usbhStatus = USBH_Get_DevDesc(&hUsbHostHS, 255)) == USBH_BUSY)
-	{}
+	while ((usbhStatus = USBH_Get_DevDesc(&hUsbHostHS, 512)) == USBH_BUSY)
+	{
+		osDelay(1);
+	}
 
 	if (usbhStatus != USBH_OK) {
 		mlog("Failed to get device descriptor.");

@@ -110,7 +110,6 @@ int __io_putchar(int value) {
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* Enable I-Cache---------------------------------------------------------*/
@@ -142,7 +141,7 @@ int main(void)
   MX_USART3_UART_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-
+	fn_state_machine_init(&g_sm);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -450,8 +449,6 @@ void StartDefaultTask(void *argument)
   MX_USB_HOST_Init();
   /* USER CODE BEGIN 5 */
     mlog("Starting");
-
-	fn_state_machine_init(&g_sm);
 
 	fn_state_machine_start(&g_sm);
 
